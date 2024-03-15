@@ -1,0 +1,550 @@
+Program.Sub.ScreenSU.Start
+Gui.F_Maint..Create
+Gui.F_Maint..Size(3600,2820)
+Gui.F_Maint..MinX(0)
+Gui.F_Maint..MinY(0)
+Gui.F_Maint..Position(0,0)
+Gui.F_Maint..BackColor(-2147483633)
+Gui.F_Maint..MousePointer(0)
+Gui.F_Maint..MaxButton(False)
+Gui.F_Maint..Sizeable(False)
+Gui.F_Maint..Caption("Maintenance")
+Gui.F_Maint..ControlBox(False)
+Gui.F_Maint.txtEmail.Create(TextBox,"",True,2925,300,0,60,315,True,0,"Arial",8,-2147483643,1)
+Gui.F_Maint.txtEmail.Event(LostFocus,txtEmail_LostFocus)
+Gui.F_Maint.lblEmail.Create(Label,"Reply-To Email in Email Body",True,2955,255,0,45,105,True,0,"Arial",8,-2147483633,0)
+Gui.F_Maint.cmdEmailBRW.Create(Button)
+Gui.F_Maint.cmdEmailBRW.Size(330,330)
+Gui.F_Maint.cmdEmailBRW.Position(3090,300)
+Gui.F_Maint.cmdEmailBRW.Caption("^")
+Gui.F_Maint.cmdEmailBRW.Event(Click,cmdEmailBRW_Click)
+Gui.F_Maint.lblPrinter.Create(Label,"Printer",True,3015,255,0,45,735,True,0,"Arial",8,-2147483633,0)
+Gui.F_Maint.txtPrinter.Create(TextBox,"",True,2925,300,0,60,945,True,0,"Arial",8,-2147483643,1)
+Gui.F_Maint.txtPrinter.Locked(True)
+Gui.F_Maint.cmdSave.Create(Button)
+Gui.F_Maint.cmdSave.Size(855,375)
+Gui.F_Maint.cmdSave.Position(180,2010)
+Gui.F_Maint.cmdSave.Caption("Save")
+Gui.F_Maint.cmdSave.Event(Click,cmdSave_Click)
+Gui.F_Maint.cmdExit.Create(Button)
+Gui.F_Maint.cmdExit.Size(855,375)
+Gui.F_Maint.cmdExit.Position(2430,2010)
+Gui.F_Maint.cmdExit.Caption("Exit")
+Gui.F_Maint.cmdExit.Event(Click,cmdExit_Click)
+Gui.F_Maint.cmdPrinterBRW.Create(Button)
+Gui.F_Maint.cmdPrinterBRW.Size(330,330)
+Gui.F_Maint.cmdPrinterBRW.Position(3090,930)
+Gui.F_Maint.cmdPrinterBRW.Caption("^")
+Gui.F_Maint.cmdPrinterBRW.Event(Click,cmdPrinterBRW_Click)
+Gui.F_Maint.lblPhoneNum.Create(Label,"Phone Number in Email Body",True,3210,255,0,45,1365,True,0,"Arial",8,-2147483633,0)
+Gui.F_Maint.txtPhoneNum.Create(TextBox,"",True,3345,300,0,60,1575,True,0,"Arial",8,-2147483643,1)
+Gui.F_Maint.txtPhoneNum.Event(LostFocus,txtPhoneNum_LostFocus)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+Program.External.Include.Library("GCG_5950_Try_Catch.lib")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Author Bix
+'Date 5/4/18
+'Customer C-Aire, Inc.
+'GCG_5021_EmailOverdueInvoices.g2u
+'Gets list of customer that overdue invoices, generates AR statement for them, and sends the statement to the customer
+'Edit by BixRB
+'Date 28 Apr 2020
+'Clockwork Spring NRI
+'GCG_5950_EmailOverdueInvoices.g2u
+
+F.Intrinsic.Control.If(V.Ambient.IsInTaskScheduler)
+	'Get Data Table of All Overdue Invoices
+	F.Intrinsic.Control.CallSub(GetOverdueInvoices)
+	F.Intrinsic.Control.CallSub(GetMaintTable)
+	'Export copies of invoice statements to \Global\Files\Overdue_Statements
+	'F.Intrinsic.Control.CallSub(GenOverdueInv)
+	'Email Invoice Statements if Courier is running
+	F.Intrinsic.Control.CallSub(EmailInvStatements)
+	'Unload datatable and close program
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.Else
+	'Open Maintenance screen
+	F.Intrinsic.Control.CallSub(GetMaintTable)
+	
+	F.Intrinsic.Control.If(V.DataTable.dtMaint(0).EMAIL!FieldVal,!=,"***NOEMAIL***")
+		Gui.F_Maint.txtEmail.Text(V.DataTable.dtMaint(0).EMAIL!FieldVal)
+	F.Intrinsic.Control.EndIf
+	
+	F.Intrinsic.Control.If(V.DataTable.dtMaint(0).PRINTER!FieldVal,!=,"***NOPRINTER***")
+		Gui.F_Maint.txtPrinter.Text(V.DataTable.dtMaint(0).PRINTER!FieldVal)
+	F.Intrinsic.Control.EndIf
+	
+	Gui.F_Maint.txtPhoneNum.Text(V.DataTable.dtMaint(0).PHONE_NUM!FieldVal)
+	
+	Gui.F_Maint..Show
+F.Intrinsic.Control.EndIf
+Program.Sub.Main.End
+
+Program.Sub.GetOverdueInvoices.Start
+V.Local.sSQL.Declare
+V.Local.bATGEmail.Declare
+F.Intrinsic.Control.Try
+
+F.Intrinsic.String.Build("select distinct rtrim(CUSTOMER) as 'CustNo', rtrim(INVOICE) as 'Invoice', (select sum(AMT_INVOICE) from V_AR_OPEN_ITEMS SubQuery where SubQuery.CUSTOMER = AR_OPEN.CUSTOMER and SubQuery.INVOICE = AR_OPEN.INVOICE)  as 'AmtRem', DUE_DATE as 'DueDate', '' as 'Cust', '' as 'Address', '' as 'Attn', 0 as 'InvoiceDelivery', '' as 'Email', '' as 'FilePath', '' as 'FileName' from V_AR_OPEN_ITEMS AR_OPEN where AmtRem > 0 and DUE_DATE <> '1900-01-01' and DUE_DATE < '{0}' and BATCH_CODE <> 12 order by CustNo, Invoice;",V.Ambient.Date.PervasiveDate,V.Local.sSQL)
+F.ODBC.Connection!con.OpenCompanyConnection(10000)
+F.Data.DataTable.CreateFromSQL("dtOverdue","con",V.Local.sSQL,True)
+F.ODBC.Connection!con.TableExists("ATG_CUSTOMER_EMAIL",V.Local.bATGEmail)
+F.Intrinsic.Control.If(V.Local.bATGEmail)
+	V.Local.sSQL.Set("select rtrim(A.CUSTOMER), if(rtrim(EMAIL) = '', rtrim(isnull(CUST_EMAIL, '')), rtrim(EMAIL)) from V_CUSTOMER_SALES A left join ATG_CUSTOMER_EMAIL B on A.CUSTOMER = B.CUSTOMER order by A.CUSTOMER;")
+F.Intrinsic.Control.Else
+	V.Local.sSQL.Set("select rtrim(CUSTOMER), rtrim(EMAIL) from V_CUSTOMER_SALES order by CUSTOMER;")
+F.Intrinsic.Control.EndIf
+F.Data.Dictionary.CreateFromSQL("dictEmail","con",V.Local.sSQL)
+F.Data.Dictionary.SetDefaultReturn("dictEmail","")
+F.Data.Dictionary.CreateFromSQL("dictCust","con","select rtrim(CUSTOMER), NAME_CUSTOMER from V_CUSTOMER_MASTER order by CUSTOMER;")
+F.Data.Dictionary.CreateFromSQL("dictAddr","con","select rtrim(CUSTOMER), rtrim(ADDRESS1) + CHAR(13) + CHAR(10) + if(rtrim(ADDRESS2) <> '', rtrim(ADDRESS2) + CHAR(13) + CHAR(10), '') + rtrim(CITY) + ',' + rtrim(STATE) + ' ' + rtrim(ZIP) from V_CUSTOMER_MASTER order by CUSTOMER;")
+F.Data.Dictionary.SetDefaultReturn("dictAddr","")
+F.Data.Dictionary.CreateFromSQL("dictAttn","con","select rtrim(CUSTOMER), rtrim(ATTENTION) from V_CUSTOMER_MASTER order by CUSTOMER;")
+F.Data.Dictionary.SetDefaultReturn("dictAttn","")
+'Key: 1 - Print; 2 - Email; 3 - Both
+F.Data.Dictionary.CreateFromSQL("dictInvcDeliv","con","select rtrim(CUSTOMER), IVC_DELIVERY from V_CUST_FORM_INFO where IVC_DELIVERY <> '' order by CUSTOMER;")
+F.Data.Dictionary.SetDefaultReturn("dictInvcDeliv",1)
+F.ODBC.Connection!con.Close
+F.Data.DataTable.FillFromDictionary("dtOverdue","dictEmail","CustNo","Email")
+F.Data.Dictionary.Close("dictEmail")
+F.Data.DataTable.FillFromDictionary("dtOverdue","dictCust","CustNo","Cust")
+F.Data.Dictionary.Close("dictCust")
+F.Data.DataTable.FillFromDictionary("dtOverdue","dictAddr","CustNo","Address")
+F.Data.Dictionary.Close("dictAddr")
+F.Data.DataTable.FillFromDictionary("dtOverdue","dictAttn","CustNo","Attn")
+F.Data.Dictionary.Close("dictAttn")
+F.Data.DataTable.FillFromDictionary("dtOverdue","dictInvcDeliv","CustNo","InvoiceDelivery")
+F.Data.Dictionary.Close("dictInvcDeliv")
+
+'create dataview that will be used to filter by customer later
+F.Data.DataView.Create("dtOverdue","dvCustomer")
+'Create distinct list of customers
+F.Data.DataView.ToDataTableDistinct("dtOverdue","dvCustomer","dtCustomers","CustNo*!*Cust*!*InvoiceDelivery*!*Address*!*Attn*!*Email*!*FilePath*!*FileName",True)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","5950")
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.GetOverdueInvoices.End
+
+'Program.Sub.GenInvStatements.Start
+''\Global\Files\Overdue_Statements\CUSTOMER_DATE_TIME.pdf
+'F.Intrinsic.Control.Try
+'V.Local.sFilter.Declare
+'V.Local.sFilePath.Declare
+'V.Local.sFileName.Declare
+'V.Local.sParams.Declare
+'V.Local.sValues.Declare
+'V.Local.sEmail.Declare
+'V.Local.sSQL.Declare
+'V.Local.sDate.Declare
+'V.Local.sTime.Declare
+'V.Local.sRet.Declare
+'V.Local.sLogo.Declare
+'V.Local.sTitle1.Declare
+'V.Local.sTitle2.Declare
+'V.Local.sTitle3.Declare
+'V.Local.i.Declare
+'V.Local.iBIRunID.Declare
+'V.Local.iBILogID.Declare
+'V.Local.iRet.Declare
+
+''Read AR Aging title options
+'F.Global.General.ReadOption(401046,1,"",0,V.Local.sLogo)
+'F.Global.General.ReadOption(401069,1,"30 - 60",0,V.Local.sTitle1)
+'F.Global.General.ReadOption(401070,1,"60 - 90",0,V.Local.sTitle2)
+'F.Global.General.ReadOption(401071,1,"OVER 90",0,V.Local.sTitle3)
+
+'F.Global.BI.GetRunID(V.Local.iBIRunID)
+'F.Global.BI.StartLogging(V.Local.iBIRunID,562,0,"",V.Local.iBILogID)
+'F.Global.BI.StopLogging(V.Local.iBILogID)
+
+'F.Intrinsic.String.Format(V.Ambient.Date,"MMDDYY",V.Local.sDate)
+'F.Intrinsic.Control.For(V.Local.i,0,V.DataTable.dtCustomers.RowCount--,1)
+'	F.Intrinsic.String.Build("[CustNo] = '{0}'",V.DataTable.dtCustomers(V.Local.i).CustNo!FieldValTrim,V.Local.sFilter)
+'	F.Data.DataView.SetFilter("dtOverdue","dvCustomer",V.Local.sFilter)
+'	'Replacing "/" with "-" because they are causing issues with creating files and sending emails
+'	F.Intrinsic.String.Replace(V.DataTable.dtCustomers(V.Local.i).Cust!FieldValTrim,"/","-",V.Local.sRet)
+'	F.Data.DataTable.SetValue("dtCustomers",V.Local.i,"Cust",V.Local.sRet)
+'	F.Data.DataView.SetValue("dtOverdue","dvCustomer",-1,"Cust",V.Local.sRet)
+'	F.Intrinsic.String.TimeString(V.Ambient.Time,V.Local.sTime)
+'	F.Intrinsic.String.Build("{0}_{1}_{2}.PDF",V.DataTable.dtCustomers(V.Local.i).Cust!FieldValTrim,V.Local.sDate,V.Local.sTime,V.Local.sFileName)
+'	F.Intrinsic.String.Build("{0}\Overdue_Statements\",V.Caller.FilesDir,V.Local.sFilePath)
+'	F.Intrinsic.File.CreateDir(V.Local.sFilePath)
+'	F.Data.DataTable.SetValue("dtCustomers",V.Local.i,"FileName",V.Local.sFileName)
+'	F.Data.DataTable.SetValue("dtCustomers",V.Local.i,"FilePath",V.Local.sFilePath)
+'	F.Data.DataView.SetValue("dtOverdue","dvCustomer",-1,"FileName",V.Local.sFileName)
+'	F.Data.DataView.SetValue("dtOverdue","dvCustomer",-1,"FilePath",V.Local.sFilePath)
+'	F.Intrinsic.String.Build("{0}{1}",V.Local.sFilePath,V.Local.sFileName,V.Local.sFilePath)
+'	'The following Callwrapper is to run AR statements report with the passed information:
+'	'CustStart !*! CustEnd !*! Date !*! Attn(Y/N) !*! Country(Y/N) !*! Total(Y/N) !*! HeadingDate !*! BeginningBranch !*! EndingBranch !*! Branch(Y/N) !*! PrintZero(Y/N)
+'	F.Intrinsic.String.Build("{0}!*!{0}!*!{1}!*!Y!*!Y!*!Y!*!{2}!*!!*!!*!N!*!N",V.DataTable.dtCustomers(V.Local.i).CustNo!FieldValTrim,V.Local.sDate,V.Local.sDate,V.Local.sValues)
+'	F.Global.General.CallWrapperSyncBIO(3050,V.Local.sValues)
+'	'TerminalNumber *!* REPORTID *!* ATTN *!* TITLE1 *!* TITLE2 *!* TITLE3 *!* TITLE4 *!* Logo
+'	'Use caller *!* 000562 *!* Y *!* CURRENT *!* V.Local.sTitle1 *!* V.Local.sTitle2 *!* V.Local.sTitle3 *!* V.Local.sLogo
+'	V.Local.sParams.Set("Terminal*!*REPORTID*!*ATTN*!*TITLE1*!*TITLE2*!*TITLE3*!*TITLE4*!*Logo")
+'	F.Intrinsic.String.Build("{0}*!*000562*!*Y*!*CURRENT*!*{1}*!*{2}*!*{3}*!*{4}",V.Caller.Terminal,V.Local.sTitle1,V.Local.sTitle2,V.Local.sTitle3,V.Local.sLogo,V.Local.sValues)
+'	F.Global.BI.RunReportPreProcessor(V.Local.iBIRunID,V.Local.iBILogID,V.Local.sParams,V.Local.sValues,"",4,True,"",-1,"",0,V.Local.sFilePath,"",V.Local.iRet)
+'	'also print report if printer is selected
+'	F.Intrinsic.Control.If(V.DataTable.dtCustomers(V.Local.i).InvoiceDelivery!FieldVal,=,1,or,V.DataTable.dtCustomers(V.Local.i).InvoiceDelivery!FieldVal,=,3)
+'		F.Intrinsic.Control.If(V.DataTable.dtMaint(0).PRINTER!FieldVal,!=,"***NOPRINTER***")
+'			F.Global.BI.RunReportPreProcessor(V.Local.iBIRunID,V.Local.iBILogID,V.Local.sParams,V.Local.sValues,"",8,True,"",-1,V.DataTable.dtMaint(0).PRINTER!FieldVal,0,V.Local.sFilePath,"",V.Local.iRet)
+'		F.Intrinsic.Control.EndIf
+'	F.Intrinsic.Control.EndIf
+'F.Intrinsic.Control.Next(V.Local.i)
+
+'F.Intrinsic.Control.Catch
+'	F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","5950")
+'	F.Intrinsic.Control.CallSub(Unload)
+'F.Intrinsic.Control.EndTry
+'Program.Sub.GenInvStatements.End
+
+Program.Sub.GenOverdueInv.Start
+'\Global\Files\Overdue_Statements\CUSTOMER_DATE_TIME.pdf
+F.Intrinsic.Control.Try
+V.Local.sFilter.Declare
+V.Local.sFilePath.Declare
+V.Local.sFileName.Declare
+V.Local.sParams.Declare
+V.Local.sValues.Declare
+V.Local.sEmail.Declare
+V.Local.sSQL.Declare
+V.Local.sDate.Declare
+V.Local.sTime.Declare
+V.Local.sRet.Declare
+V.Local.sLogo.Declare
+V.Local.sTitle1.Declare
+V.Local.sTitle2.Declare
+V.Local.sTitle3.Declare
+V.Local.i.Declare
+V.Local.iBIRunID.Declare
+V.Local.iBILogID.Declare
+V.Local.iRet.Declare
+
+V.Local.i.Set(V.Args.CustRow)
+
+'Read AR Aging title options
+F.Global.General.ReadOption(401046,1,"",0,V.Local.sLogo)
+'F.Global.General.ReadOption(401069,1,"30 - 60",0,V.Local.sTitle1)
+'F.Global.General.ReadOption(401070,1,"60 - 90",0,V.Local.sTitle2)
+'F.Global.General.ReadOption(401071,1,"OVER 90",0,V.Local.sTitle3)
+
+F.Global.BI.GetRunID(V.Local.iBIRunID)
+F.Global.BI.StartLogging(V.Local.iBIRunID,55,0,"",V.Local.iBILogID)
+F.Global.BI.StopLogging(V.Local.iBILogID)
+
+F.Intrinsic.String.Format(V.Ambient.Date,"MMDDYY",V.Local.sDate)
+
+	F.Intrinsic.String.Build("[CustNo] = '{0}'",V.DataTable.dtCustomers(V.Local.i).CustNo!FieldValTrim,V.Local.sFilter)
+	F.Data.DataView.SetFilter("dtOverdue","dvCustomer",V.Local.sFilter)
+	'Replacing "/" with "-" because they are causing issues with creating files and sending emails
+	F.Intrinsic.String.Replace(V.DataTable.dtCustomers(V.Local.i).Cust!FieldValTrim,"/","-",V.Local.sRet)
+	F.Data.DataTable.SetValue("dtCustomers",V.Local.i,"Cust",V.Local.sRet)
+	F.Data.DataView.SetValue("dtOverdue","dvCustomer",-1,"Cust",V.Local.sRet)
+	F.Intrinsic.String.TimeString(V.Ambient.Time,V.Local.sTime)
+	F.Intrinsic.String.Build("{0}_{1}_{2}.PDF",V.ARGS.Invoice,V.Local.sDate,V.Local.sTime,V.Local.sFileName)
+	F.Intrinsic.String.Build("{0}\Overdue_Statements\",V.Caller.FilesDir,V.Local.sFilePath)
+	F.Intrinsic.File.CreateDir(V.Local.sFilePath)
+	F.Data.DataTable.SetValue("dtCustomers",V.Local.i,"FileName",V.Local.sFileName)
+	F.Data.DataTable.SetValue("dtInvoice",V.DataTable.dtInvoice.RowCount--,"FileName",V.Local.sFileName)
+	F.Data.DataTable.SetValue("dtCustomers",V.Local.i,"FilePath",V.Local.sFilePath)
+	F.Data.DataTable.SetValue("dtInvoice",V.DataTable.dtInvoice.RowCount--,"FilePath",V.Local.sFilePath)
+	F.Data.DataView.SetValue("dtOverdue","dvCustomer",-1,"FileName",V.Local.sFileName)
+	F.Data.DataView.SetValue("dtOverdue","dvCustomer",-1,"FilePath",V.Local.sFilePath)
+	F.Intrinsic.String.Build("{0}{1}",V.Local.sFilePath,V.Local.sFileName,V.Local.sFilePath)
+	'The following Callwrapper is to run re-print invoice report with the passed information:
+	'InvoiceNumber!*!
+	F.Intrinsic.String.Build("{0}!*!",V.ARGS.invoice,V.Local.sValues)
+	F.Global.General.CallWrapperSyncBIO(200900,V.Local.sValues)
+	'TerminalNumber *!* REPORTID *!* ATTN *!* TITLE1 *!* TITLE2 *!* TITLE3 *!* TITLE4 *!* Logo
+	'Use caller *!* 000562 *!* Y *!* CURRENT *!* V.Local.sTitle1 *!* V.Local.sTitle2 *!* V.Local.sTitle3 *!* V.Local.sLogo
+	V.Local.sParams.Set("Terminal*!*REPORTID*!*PROGRAM*!*IVCTYPE*!*PRTORD*!*Logo")
+	F.Intrinsic.String.Build("{0}*!*000055*!*{1}*!*{2}*!*{3}*!*{4}",V.Caller.Terminal,"GCG_5950_EmailOverDueInvoices","INVOICE","N",V.Local.sLogo,V.Local.sValues)
+	F.Global.BI.RunReportPreProcessor(V.Local.iBIRunID,V.Local.iBILogID,V.Local.sParams,V.Local.sValues,"",4,True,"",-1,"",0,V.Local.sFilePath,"",V.Local.iRet)
+	'also print report if printer is selected
+	F.Intrinsic.Control.If(V.DataTable.dtCustomers(V.Local.i).InvoiceDelivery!FieldVal,=,1,or,V.DataTable.dtCustomers(V.Local.i).InvoiceDelivery!FieldVal,=,3)
+		F.Intrinsic.Control.If(V.DataTable.dtMaint(0).PRINTER!FieldVal,!=,"***NOPRINTER***")
+			F.Global.BI.RunReportPreProcessor(V.Local.iBIRunID,V.Local.iBILogID,V.Local.sParams,V.Local.sValues,"",8,True,"",-1,V.DataTable.dtMaint(0).PRINTER!FieldVal,0,V.Local.sFilePath,"",V.Local.iRet)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","5950")
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.GenOverdueInv.End
+
+Program.Sub.EmailInvStatements.Start
+F.Intrinsic.Control.Try
+V.Local.sSubject.Declare
+V.Local.sMessage.Declare
+V.Local.sSend.Declare
+V.Local.sCompany.Declare
+V.Local.sReceive.Declare
+V.Local.sFilePath.Declare
+V.Local.sLog.Declare
+V.Local.sSQL.Declare
+V.Local.sFilter.Declare
+V.Local.sInvoice.Declare
+V.Local.sAmount.Declare
+V.Local.sDueDate.Declare
+V.Local.sInvoiceList.Declare
+V.Local.sTabs.Declare
+V.Local.i.Declare
+V.Local.iInvoice.Declare
+V.Local.iTabs.Declare
+V.Local.iCourier.Declare
+V.Local.iUser.Declare
+
+'Load values constant for all emails
+F.Intrinsic.Control.If(V.DataTable.dtMaint(0).EMAIL!FieldVal,=,"***NOEMAIL***")
+	'No email selected, log and exit
+	V.Local.sLog.Set("No Email selected in Accounts Receivable > Administration > Auto Email/Print Settings")
+	F.Intrinsic.String.Build("{0}\Overdue_Statements\Result\",V.Caller.FilesDir,V.Local.sFilePath)
+	F.Intrinsic.File.CreateDir(V.Local.sFilePath)
+	F.Intrinsic.String.Build("{0}\Overdue_Statements\Result\{3}_{1}_{2}.TXT",V.Caller.FilesDir,V.Ambient.Date.FormatYYYYMMDD,V.Ambient.Time.FormatHHNNSS,V.Caller.CompanyCode,V.Local.sFilePath)
+	F.Intrinsic.File.String2File(V.Local.sFilePath,V.Local.sLog)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+F.Global.General.ReadCompanyName(V.Caller.CompanyCode,V.Local.sCompany)
+F.Global.Security.GetUserId(V.Caller.User,V.Caller.CompanyCode,V.Local.iUser)
+'Build sender
+F.Intrinsic.String.Build("{0}*!*{1}",V.DataTable.dtMaint(0).EMAIL!FieldVal,V.Local.sCompany,V.Local.sSend)
+V.Local.sLog.Set("Cust -- Email")
+'Build subject
+F.Intrinsic.String.Build("{0} - Overdue Invoices",V.Local.sCompany,V.Local.sSubject)
+
+'Build Invoice Table
+F.Data.DataTable.Create("dtInvoice",True)
+F.Data.DataTable.AddColumn("dtInvoice","Invoice","String","")
+F.Data.DataTable.AddColumn("dtInvoice","FileName","String","")
+F.Data.DataTable.AddColumn("dtInvoice","FilePath","String","")
+
+'Lots of log building going on when generating or not generating emails dependant on if the email address for the customer is present
+F.Intrinsic.Control.For(V.Local.i,0,V.DataTable.dtCustomers.RowCount--,1)
+	F.Intrinsic.Control.If(V.DataTable.dtCustomers(V.Local.i).RowState,!=,8)
+		'Invoice delivery needs to be Email or Both
+'		F.Intrinsic.Control.If(V.DataTable.dtCustomers(V.Local.i).InvoiceDelivery!FieldVal,=,2,or,V.DataTable.dtCustomers(V.Local.i).InvoiceDelivery!FieldVal,=,3)
+			F.Intrinsic.Control.If(V.DataTable.dtCustomers(V.Local.i).Email!FieldValTrim,=,"")
+				F.Intrinsic.String.Build("{0}{1}{2}-{3} -- No email found",V.Local.sLog,V.Ambient.NewLine,V.DataTable.dtCustomers(V.Local.i).Cust!FieldValTrim,V.DataTable.dtCustomers(V.Local.i).CustNo!FieldValTrim,V.Local.sLog)
+			F.Intrinsic.Control.Else
+				'Build recipient
+				F.Intrinsic.String.Build("{0}*!*{1}",V.DataTable.dtCustomers(V.Local.i).Cust!FieldValTrim,V.DataTable.dtCustomers(V.Local.i).Email!FieldValTrim,V.Local.sReceive)
+				'Build message body:
+				F.Intrinsic.Control.If(V.DataTable.dtCustomers(V.Local.i).InvoiceDelivery!FieldVal,=,2,or,V.DataTable.dtCustomers(V.Local.i).InvoiceDelivery!FieldVal,=,3)
+					F.Intrinsic.String.Build("{1}{0}{2}{0}{3}{0}{0}{4}{0}{0}ATTN: {5}{0}{0}Please note the following invoices are now outstanding:{0}{0}",V.Ambient.NewLine,V.DataTable.dtCustomers(V.Local.i).Cust!FieldVal,V.DataTable.dtCustomers(V.Local.i).Address!FieldVal,V.DataTable.dtCustomers(V.Local.i).Email!FieldVal,V.Ambient.Date.FormatMM/DD/YYYY,V.DataTable.dtCustomers(V.Local.i).Attn!FieldVal,V.Local.sMessage)
+					F.Intrinsic.String.Build("[CustNo] = '{0}'",V.DataTable.dtCustomers(V.Local.i).CustNo!FieldValTrim,V.Local.sFilter)
+					F.Data.DataView.SetFilter("dtOverdue","dvCustomer",V.Local.sFilter)
+					V.Local.iTabs.Set(0)
+					'this is all super important, trust me - Bix
+					F.Intrinsic.Control.For(V.Local.iInvoice,0,V.DataView.dtOverdue!dvCustomer.RowCount--,1)
+						'first loop, get the Invoice, Amount and Due Date witten to local arrays
+						V.Local.sInvoice.RedimPreserve(0,V.Local.iInvoice)
+						V.Local.sAmount.RedimPreserve(0,V.Local.iInvoice)
+						V.Local.sDueDate.RedimPreserve(0,V.Local.iInvoice)
+						F.Intrinsic.String.RPad(V.DataView.dtOverdue!dvCustomer(V.Local.iInvoice).Invoice!FieldVal," ",7,V.Local.sInvoice(V.Local.iInvoice))
+						F.Intrinsic.String.Format(V.DataView.dtOverdue!dvCustomer(V.Local.iInvoice).AmtRem!FieldVal,"$#,###,##0.00",V.Local.sAmount(V.Local.iInvoice))
+						'Amount will be variable in string size so we need to make sure that the Due Date is tabbed over far enough for the whole column
+						F.Intrinsic.Control.If(V.Local.iTabs,<,1)
+							V.Local.iTabs.Set(1)
+						F.Intrinsic.Control.EndIf
+						F.Intrinsic.Control.If(V.DataView.dtOverdue!dvCustomer(V.Local.iInvoice).AmtRem!FieldVal,>,100,and,V.Local.iTabs,<,2)
+							V.Local.iTabs.Set(2)
+						F.Intrinsic.Control.EndIf
+						F.Intrinsic.Control.If(V.DataView.dtOverdue!dvCustomer(V.Local.iInvoice).AmtRem!FieldVal,>,100000,and,V.Local.iTabs,<,3)
+							V.Local.iTabs.Set(3)
+						F.Intrinsic.Control.EndIf
+						F.Intrinsic.Control.If(V.DataView.dtOverdue!dvCustomer(V.Local.iInvoice).AmtRem!FieldVal,>,100000000,and,V.Local.iTabs,<,4)
+							V.Local.iTabs.Set(4)
+						F.Intrinsic.Control.EndIf
+						F.Intrinsic.String.Format(V.DataView.dtOverdue!dvCustomer(V.Local.iInvoice).DueDate!FieldVal,"M/D/YYYY",V.Local.sDueDate(V.Local.iInvoice))
+					F.Intrinsic.Control.Next(V.Local.iInvoice)
+					'At this point we have a count of how many tabs we need, so we need to build a string with those tabs
+					V.Local.sTabs.Set("")
+					F.Intrinsic.Control.For(V.Local.iInvoice,1,V.Local.iTabs,1)
+						F.Intrinsic.String.Build("{0}{1}",V.Local.sTabs,V.Ambient.Tab,V.Local.sTabs)
+					F.Intrinsic.Control.Next(V.Local.iInvoice)
+					'After building the tabs string we can add the column headers and the invoice information to the message body
+					F.Intrinsic.String.Build("{0}Invoice{1}Amount{3}Due Date{2}",V.Local.sMessage,V.Ambient.Tab,V.Ambient.NewLine,V.Local.sTabs,V.Local.sMessage)
+
+					F.Intrinsic.Control.For(V.Local.iInvoice,0,V.Local.sInvoice.UBound,1)
+						F.Intrinsic.String.Build("{0}{3}{1}{4}{6}{5}{2}",V.Local.sMessage,V.Ambient.Tab,V.Ambient.NewLine,V.Local.sInvoice(V.Local.iInvoice),V.Local.sAmount(V.Local.iInvoice),V.Local.sDueDate(V.Local.iInvoice),V.Local.sTabs,V.Local.sMessage)
+						F.Data.DataTable.AddRow("dtInvoice","Invoice",V.Local.sInvoice(V.Local.iInvoice))
+						F.Intrinsic.Control.CallSub(GenOverdueInv,"Invoice",V.Local.sInvoice(V.Local.iInvoice),"CustRow",V.Local.i)
+					F.Intrinsic.Control.Next(V.Local.iInvoice)
+					F.Intrinsic.String.Build("{0}{1}If there is a discrepancy/dispute or you need a copy of invoice(s), please contact {2} or call {3}.{1}{1}Thank you and have a great day!",V.Local.sMessage,V.Ambient.NewLine,V.DataTable.dtMaint(0).EMAIL!FieldVal,V.DataTable.dtMaint(0).PHONE_NUM!FieldVal,V.Local.sMessage)
+				F.Intrinsic.Control.Else
+					F.Intrinsic.Control.For(V.Local.iInvoice,0,V.Local.sInvoice.UBound,1)
+						F.Data.DataTable.AddRow("dtInvoice","Invoice",V.Local.sInvoice(V.Local.iInvoice))
+						F.Intrinsic.Control.CallSub(GenOverdueInv,"Invoice",V.Local.sInvoice(V.Local.iInvoice),"CustRow",V.Local.i)
+					F.Intrinsic.Control.Next(V.Local.iInvoice)
+					F.Data.DataTable.DeleteRow("dtInvoice")
+					F.Data.DataTable.acceptchanges("dtInvoice")
+					F.Intrinsic.String.Build("{1}{0}{2}{0}{3}{0}{0}{4}{0}{0}ATTN: {5}{0}{0}Attached are the outstanding Invoices we have from your company.{0}{0}If there is a discrepancy/dispute or you need a copy of invoice(s), please contact {6} or call {7}.{0}{0}Thank you and have a great day!",V.Ambient.NewLine,V.DataTable.dtCustomers(V.Local.i).Cust!FieldVal,V.DataTable.dtCustomers(V.Local.i).Address!FieldVal,V.DataTable.dtCustomers(V.Local.i).Email!FieldVal,V.Ambient.Date.FormatM/D/YYYY,V.DataTable.dtCustomers(V.Local.i).Attn!FieldVal,V.DataTable.dtMaint(0).EMAIL!FieldVal,V.DataTable.dtMaint(0).PHONE_NUM!FieldVal,V.Local.sMessage)
+				F.Intrinsic.Control.EndIf
+				'End Build Message Body
+				F.Intrinsic.Control.For(V.Local.iInvoice,0,V.DataTable.dtInvoice.RowCount--,1)
+					F.Intrinsic.control.If(V.Local.iInvoice,=,0)
+						F.Intrinsic.String.Build("{0}*!*{1}",V.DataTable.dtInvoice(V.Local.iInvoice).FileName!FieldValTrim,V.DataTable.dtInvoice(V.Local.iInvoice).FilePath!FieldValTrim,V.Local.sFilePath)
+					F.Intrinsic.Control.Else
+						F.Intrinsic.String.Build("{2}@!@{0}*!*{1}",V.DataTable.dtInvoice(V.Local.iInvoice).FileName!FieldValTrim,V.DataTable.dtInvoice(V.Local.iInvoice).FilePath!FieldValTrim,V.Local.sFilePath,V.Local.sFilePath)
+					F.Intrinsic.Control.EndIf
+				F.Intrinsic.Control.Next(V.Local.iInvoice)
+				F.Global.Messaging.QueueMessage(V.Caller.CompanyCode,V.Local.iUser,"GCG_5950",V.Local.sSubject,V.Local.sSend,V.Local.sReceive,V.Local.sMessage,5,V.DataTable.dtMaint(0).EMAIL!FieldVal,False,"",,"","","","","",V.Local.sFilePath,False)
+				F.Intrinsic.String.Build("{0}{1}{2}-{4} -- {3}",V.Local.sLog,V.Ambient.NewLine,V.DataTable.dtCustomers(V.Local.i).Cust!FieldValTrim,V.DataTable.dtCustomers(V.Local.i).Email!FieldValTrim,V.DataTable.dtCustomers(V.Local.i).CustNo!FieldVal,V.Local.sLog)
+				F.Data.DataTable.DeleteRow("dtInvoice")
+				F.Data.DataTable.acceptchanges("dtInvoice")
+			F.Intrinsic.Control.EndIf
+'		F.Intrinsic.Control.Else
+'			F.Intrinsic.String.Build("{0}{1}{2}-{3} -- Not flagged for emailing",V.Local.sLog,V.Ambient.NewLine,V.DataTable.dtCustomers(V.Local.i).Cust!FieldValTrim,V.DataTable.dtCustomers(V.Local.i).CustNo!FieldValTrim,V.Local.sLog)
+'		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.i)
+F.Data.DataTable.Close("dtInvoice")
+F.Intrinsic.String.Build("{0}\Overdue_Statements\Result\",V.Caller.FilesDir,V.Local.sFilePath)
+F.Intrinsic.File.CreateDir(V.Local.sFilePath)
+F.Intrinsic.String.Build("{0}\Overdue_Statements\Result\{3}_{1}_{2}.TXT",V.Caller.FilesDir,V.Ambient.Date.FormatYYYYMMDD,V.Ambient.Time.FormatHHNNSS,V.Caller.CompanyCode,V.Local.sFilePath)
+F.Intrinsic.File.String2File(V.Local.sFilePath,V.Local.sLog)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","5950")
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.EmailInvStatements.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.If(V.DataTable.dtOverdue.Exists)
+	F.Data.DataTable.Close("dtOverdue")
+F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.If(V.DataTable.dtMaint.Exists)
+	F.Data.DataTable.Close("dtMaint")
+F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","5950")
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Unload.End
+
+Program.Sub.GetMaintTable.Start
+F.Intrinsic.Control.Try
+
+F.ODBC.Connection!con.OpenCompanyConnection
+F.Data.DataTable.CreateFromSQL("dtMaint","con","select EMAIL, PRINTER, PHONE_NUM from GCG_5950_MAINT;",True)
+
+F.Intrinsic.Control.If(V.DataTable.dtMaint.RowCount,=,0)
+	F.Data.DataTable.AddRow("dtMaint","EMAIL","***NOEMAIL***","PRINTER","***NOPRINTER***","PHONE_NUM","")
+	F.Data.DataTable.SaveToDB("dtMaint","con","GCG_5950_MAINT","",128)
+F.Intrinsic.Control.EndIf
+
+F.ODBC.Connection!con.Close
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.GetMaintTable.End
+
+Program.Sub.cmdEmailBRW_Click.Start
+V.Local.sSQL.Declare
+V.Local.sRet.Declare
+F.Intrinsic.Control.Try
+
+F.Intrinsic.UI.SetBrowserHotTypeAhead(True)
+F.Intrinsic.String.Build("select USER_ID, rtrim(GS_USER), rtrim(FIRST_NAME), rtrim(MIDDLE_NAME), rtrim(LAST_NAME), rtrim(EMAIL) from USER_INFORMATION where (COMPANY = '{0}' and COMPANY_SPECIFIC = 1) or COMPANY_SPECIFIC = 0 order by USER_ID;",V.Caller.CompanyCode,V.Local.sSQL)
+F.ODBC.Connection!ccon.OpenCommonConnection
+F.Intrinsic.UI.Browser("User Emails","ccon",V.Local.sSQL,"User ID*!*Username*!*First*!*Middle*!*Last*!*Email","10*!*30*!*50*!*50*!*50*!*50",V.Local.sRet)
+F.ODBC.Connection!ccon.Close
+
+F.Intrinsic.Control.If(V.Local.sRet.IsNotCancel)
+	F.Intrinsic.String.Split(V.Local.sRet,"*!*",V.Local.sRet)
+	
+	'Email is located at index 5
+	Gui.F_Maint.txtEmail.Text(V.Local.sRet(5))
+	F.Intrinsic.Control.If(V.Local.sRet(5),!=,"")
+		F.Data.DataTable.SetValue("dtMaint",0,"EMAIL",V.Local.sRet(5))
+	F.Intrinsic.Control.Else
+		F.Data.DataTable.SetValue("dtMaint",0,"EMAIL","***NOEMAIL***")
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdEmailBRW_Click.End
+
+Program.Sub.txtEmail_LostFocus.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.If(V.Screen.F_Maint!txtEmail.Text.Trim,!=,"")
+	F.Data.DataTable.SetValue("dtMaint",0,"EMAIL",V.Screen.F_Maint!txtEmail.Text.Trim)
+F.Intrinsic.Control.Else
+	F.Data.DataTable.SetValue("dtMaint",0,"EMAIL","***NOEMAIL***")
+F.Intrinsic.Control.EndIf
+
+Gui.F_Maint.txtEmail.Text(V.Screen.F_Maint!txtEmail.Text.Trim)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.txtEmail_LostFocus.End
+
+Program.Sub.cmdSave_Click.Start
+F.Intrinsic.Control.Try
+
+F.ODBC.Connection!con.OpenCompanyConnection
+F.ODBC.Connection!con.Execute("delete from GCG_5950_MAINT;")
+F.Data.DataTable.SaveToDB("dtMaint","con","GCG_5950_MAINT","",128)
+F.ODBC.Connection!con.Close
+
+F.Intrinsic.UI.Msgbox("Saved!")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.CallSub(Unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdSave_Click.End
+
+Program.Sub.cmdExit_Click.Start
+F.Intrinsic.Control.CallSub(UnLoad)
+Program.Sub.cmdExit_Click.End
+
+Program.Sub.cmdPrinterBRW_Click.Start
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Printer.SelectPrinterDialog
+
+F.Intrinsic.Control.If(V.Ambient.PrinterDialogSelection.IsNotCancel)
+	Gui.F_Maint.txtPrinter.Text(V.Ambient.PrinterDialogSelection)
+	F.Intrinsic.Control.If(V.Ambient.PrinterDialogSelection,!=,"")
+		F.Data.DataTable.SetValue("dtMaint",0,"PRINTER",V.Ambient.PrinterDialogSelection)
+	F.Intrinsic.Control.Else
+		F.Data.DataTable.SetValue("dtMaint",0,"PRINTER","***NOPRINTER***")
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdPrinterBRW_Click.End
+
+Program.Sub.txtPhoneNum_LostFocus.Start
+F.Intrinsic.Control.Try
+
+F.Data.DataTable.SetValue("dtMaint",0,"PHONE_NUM",V.Screen.F_Maint!txtPhoneNum.Text.Trim)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.txtPhoneNum_LostFocus.End
